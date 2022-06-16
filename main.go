@@ -1,14 +1,15 @@
 package main
 
 import (
-	"encoding/csv"
+	b64 "encoding/base64"
+	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
+	"net/http"
+	"net/url"
 	"os"
-	"regexp"
-	"sort"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -19,131 +20,195 @@ const (
 	Rejected
 )
 
-type specStruct struct {
-	eventType      EventType
-	specType       string
-	issue          string
-	status         string
-	BU             string
-	product        string
-	eventDate      time.Time
-	created        time.Time
-	week           int
-	laterApprovals []string
-	rejections     int
+type ComplexField struct {
+	Value string `json:"value"`
+}
+
+type Field struct {
+	Summary     string       `json:"summary"`
+	Description string       `json:"description"`
+	DocLink     string       `json:"customfield_11264"`
+	Product     string       `json:"customfield_10576"`
+	Title       string       `json:"customfield_10011"`
+	BU          ComplexField `json:"customfield_10952"`
+	Company     ComplexField `json:"customfield_10412"`
+	SpecType    ComplexField `json:"customfield_11368"`
+	Created     string       `json:"created"`
+}
+
+type Issue struct {
+	Id     string `json:"id"`
+	Key    string `json:"key"`
+	Self   string `json:"self"`
+	Fields Field  `json:"fields"`
+}
+
+type IssuesResponse struct {
+	Total    int     `json:"total"`
+	StartAt  int     `json:"startAt"`
+	PageSize int     `json:"maxResults"`
+	Issues   []Issue `json:"issues"`
+}
+
+type Paragraph struct {
+	Type string `json:"type"`
+	Text string `json:"text`
+}
+
+type Content struct {
+	Paragaph []Paragraph `json:"content"`
+}
+
+type ContentBody struct {
+	Content []Content `json:"content"`
+}
+
+type Comment struct {
+	CommentBody ContentBody `json:"body"`
+	Created     string      `json:"created"`
+}
+
+type CommentsResponse struct {
+	Total    int       `json:"total"`
+	StartAt  int       `json:"startAt"`
+	Comments []Comment `json:"comments"`
+}
+
+// queryIssues - get a page of JIRA data
+func queryIssues(startAt int) *IssuesResponse {
+	user := os.Getenv("JIRA_user")
+
+	apiToken := os.Getenv("JIRA_token")
+
+	accessString := user + ":" + apiToken
+
+	accessString = b64.StdEncoding.EncodeToString([]byte(accessString))
+
+	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) and updated>=startOfYear()")
+
+	client := &http.Client{}
+	query := fmt.Sprintf("https://workstation-df.atlassian.net/rest/api/2/search?jql=%s&startAt=%d&maxResults=1000", jql, startAt)
+	request, err := http.NewRequest("GET", query, nil)
+
+	request.Header.Add("Authorization", "Basic "+accessString)
+	resp, err := client.Do(request)
+	if err != nil {
+		log.Fatal(err)
+	}
+	responseData, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var jiraResponse IssuesResponse
+
+	json.Unmarshal(responseData, &jiraResponse)
+
+	return &jiraResponse
+}
+
+// queryComments - get a page of JIRA data
+func queryComments(issueId string) *CommentsResponse {
+	user := os.Getenv("JIRA_user")
+
+	apiToken := os.Getenv("JIRA_token")
+
+	accessString := user + ":" + apiToken
+
+	accessString = b64.StdEncoding.EncodeToString([]byte(accessString))
+
+	client := &http.Client{}
+	query := fmt.Sprintf("https://workstation-df.atlassian.net/rest/api/3/issue/%s/comment?orderBy=+created&maxResults=100", issueId)
+	request, err := http.NewRequest("GET", query, nil)
+
+	request.Header.Add("Authorization", "Basic "+accessString)
+	resp, err := client.Do(request)
+	if err != nil {
+		log.Fatal(err)
+	}
+	responseData, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var jiraResponse CommentsResponse
+
+	json.Unmarshal(responseData, &jiraResponse)
+
+	return &jiraResponse
 }
 
 func main() {
-	f, err := os.Open("cenpro.csv")
-	if err != nil {
-		log.Fatal(err)
-	}
+	//	weekRegex, _ := regexp.Compile("W(\\d)+")
 
-	// remember to close the file at the end of the program
-	defer f.Close()
+	// Query JIRA
 
-	// read csv values using csv.Reader
-	csvReader := csv.NewReader(f)
-	data, err := csvReader.ReadAll()
-	if err != nil {
-		log.Fatal(err)
-	}
+	cursor := 0
 
-	weekRegex, _ := regexp.Compile("W(\\d)+")
+	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter")
 
-	specs := make(map[string]([]specStruct))
+	for atEnd := false; !atEnd; {
+		response := queryIssues(cursor)
 
-	for _, row := range data {
-		for _, cell := range row {
-			if strings.Contains(cell, "Approved in") || strings.Contains(cell, "Rejected in") {
-				var eventType EventType
-				if strings.Contains(cell, "Approved in") {
-					eventType = Approved
-				} else {
-					eventType = Rejected
-				}
-				lines := strings.Split(cell, "\n")
-				parts1 := strings.Split(lines[0], " ")
-				eventDate, err := time.Parse("02/Jan/06", parts1[0])
-				if err != nil {
-					fmt.Printf("Date %s not parsed\n", parts1[0])
-				}
+		// Go look for approved rejected status
 
-				if eventDate.Year() == 2022 {
-					issue := row[1]
-					status := row[4]
-					BU := row[604]
-					product := row[629]
-					specType := row[1096]
-					created := strings.Split(row[20], " ")[0]
-					createDate, err := time.Parse("02/Jan/06", created)
-					if err != nil {
-						fmt.Printf("Date %s not parsed\n", created)
-					}
+		for _, issue := range response.Issues {
+			comments := queryComments(issue.Id)
 
-					week := weekRegex.FindString(lines[0])
+			approved := false
 
-					weekNum, _ := strconv.Atoi(week[1:len(week)])
+			var firstApproved time.Time
 
-					spec := specStruct{eventType: eventType, specType: specType, issue: issue, status: status, BU: BU, product: product, eventDate: eventDate, created: createDate, week: weekNum}
+			approvalWeek := ""
 
-					priorFoundSpecs, found := specs[issue]
+			rejectionsPriorToFirstApproval := 0
 
-					if found {
-						priorFoundSpecs = append(priorFoundSpecs, spec)
-						specs[issue] = priorFoundSpecs
-					} else {
-						specArray := (make([]specStruct, 0))
-						specArray = append(specArray, spec)
-						specs[issue] = specArray
+			subsequentApprovals := 0
+
+			for _, comment := range comments.Comments {
+				for _, paragraph := range comment.CommentBody.Content {
+
+					if len(paragraph.Paragaph) >= 2 {
+						if paragraph.Paragaph[0].Text == "Approved in " {
+							createDate, _ := time.Parse("2006-01-02T15:04:05+0000", comment.Created)
+
+							if !approved {
+								approved = true
+								firstApproved = createDate
+								approvalWeek = paragraph.Paragaph[1].Text[1:]
+							} else {
+								subsequentApprovals += 1
+							}
+						}
+						if paragraph.Paragaph[0].Text == "Rejected in " {
+							if !approved {
+								rejectionsPriorToFirstApproval += 1
+							}
+						}
 					}
 				}
 			}
-		}
-	}
 
-	// Now compile the specs together to find the first approval time, rejected rates, etc
-	fmt.Println("Type,Issue,Status,BU,Product,Year,Week,Later Approved Count,Later Approved Weeks, Latency(Days),Rejected prior to 1st approval")
-
-	for _, specArray := range specs {
-
-		// Sort the array by time
-
-		sort.Slice(specArray, func(i, j int) bool {
-			return specArray[i].eventDate.Before(specArray[j].eventDate)
-		})
-
-		// Now go calculate the important stuff
-
-		foundFirstPass := false
-
-		rejectedCount := 0
-
-		var firstSpec specStruct
-
-		for _, value := range specArray {
-
-			switch value.eventType {
-			case Approved:
-				if foundFirstPass == false {
-					foundFirstPass = true
-					value.rejections = rejectedCount
-					firstSpec = value
-				} else {
-					firstSpec.laterApprovals = append(firstSpec.laterApprovals, "W"+strconv.Itoa(value.week))
+			if approved {
+				created, _ := time.Parse("2006-01-02T15:04:05+0000", issue.Fields.Created)
+				latency := firstApproved.Sub(created)
+				approvedFirstTime := "N"
+				if rejectionsPriorToFirstApproval == 0 {
+					approvedFirstTime = "Y"
 				}
-				rejectedCount = 0
-				break
-			case Rejected:
-				rejectedCount += 1
-			}
+				weekNum, _ := strconv.ParseFloat(approvalWeek, 64)
+				quarter := int(weekNum/13.04) + 1
+				fmt.Printf("%s,%s,\"%s\",%s,%s,%d,%s,%d,%d,%d,%s,%d\n", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, firstApproved.Year(), approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter)
 
+			}
 		}
 
-		latency := firstSpec.eventDate.Sub(firstSpec.created)
+		// House-keeping
 
-		fmt.Printf("%s,%s,%s,%s,%s,%d,%d,%d,%s,%d,%d\n", firstSpec.specType, firstSpec.issue, firstSpec.status, firstSpec.BU, firstSpec.product, firstSpec.eventDate.Year(), firstSpec.week, len(firstSpec.laterApprovals), strings.Join(firstSpec.laterApprovals, ":"), int64(latency.Hours()/24), firstSpec.rejections)
+		cursor = response.StartAt + response.PageSize
 
+		if response.StartAt+len(response.Issues) >= response.Total {
+			atEnd = true
+		}
 	}
-
 }
