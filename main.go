@@ -146,7 +146,7 @@ func main() {
 
 	cursor := 0
 
-	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter,Rework Week,Rework Quarter,Rework Year,Rework subsequent approvals,Adj Week,Adj Quarter,Adj Year")
+	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter,Rework Week,Rework Quarter,Rework Year,Adj Week,Adj Quarter,Adj Year")
 
 	for atEnd := false; !atEnd; {
 		response := queryIssues(cursor)
@@ -174,7 +174,7 @@ func main() {
 
 			reworkYear := ""
 
-			reworkSubsequentApprovals := 0
+			var lastApproved time.Time
 
 			for _, comment := range comments.Comments {
 				for _, paragraph := range comment.CommentBody.Content {
@@ -196,19 +196,17 @@ func main() {
 							} else {
 								subsequentApprovals += 1
 
-								threeMonthsAfterFirstApproval := firstApproved.AddDate(0, 3, 0)
+								threeMonthsAfterLastApproval := lastApproved.AddDate(0, 3, 0)
 
-								if createDate.After(threeMonthsAfterFirstApproval) {
-									if !reworked {
-										reworked = true
-										//									firstApprovedInLastYear = createDate
-										reworkWeek = paragraph.Paragaph[1].Text[1:]
-										reworkYear = fmt.Sprintf("%d", createDate.Year())
-									} else {
-										reworkSubsequentApprovals += 1
-									}
+								if createDate.After(threeMonthsAfterLastApproval) {
+									reworked = true
+									//									firstApprovedInLastYear = createDate
+									reworkWeek = paragraph.Paragaph[1].Text[1:]
+									reworkYear = fmt.Sprintf("%d", createDate.Year())
 								}
 							}
+
+							lastApproved = createDate
 						}
 						if paragraph.Paragaph[0].Text == "Rejected in " {
 							if !approved {
@@ -236,7 +234,7 @@ func main() {
 					reworkQuarter = fmt.Sprintf("%d", int(weekNum/13.04)+1)
 				}
 				fmt.Printf("%s,%s,\"%s\",%s,%s,%s", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, firstApprovedYear)
-				fmt.Printf(",%s,%d,%d,%d,%s,%d,%s,%s,%s,%d", approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter, reworkWeek, reworkQuarter, reworkYear, reworkSubsequentApprovals)
+				fmt.Printf(",%s,%d,%d,%d,%s,%d,%s,%s,%s", approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter, reworkWeek, reworkQuarter, reworkYear)
 
 				if reworked {
 					fmt.Printf(",%s,%s,%s\n", reworkWeek, reworkQuarter, reworkYear)
