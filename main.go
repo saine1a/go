@@ -84,7 +84,8 @@ func queryIssues(startAt int) *IssuesResponse {
 
 	accessString = b64.StdEncoding.EncodeToString([]byte(accessString))
 
-	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) and updated>=startOfYear()")
+	//	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) and updated>=startOfYear()")
+	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) order by updated desc")
 
 	client := &http.Client{}
 	query := fmt.Sprintf("https://workstation-df.atlassian.net/rest/api/2/search?jql=%s&startAt=%d&maxResults=1000", jql, startAt)
@@ -145,7 +146,7 @@ func main() {
 
 	cursor := 0
 
-	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter")
+	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter,Rework Week,Rework Quarter,Rework Year,Rework subsequent approvals,Adj Week,Adj Quarter,Adj Year")
 
 	for atEnd := false; !atEnd; {
 		response := queryIssues(cursor)
@@ -159,11 +160,21 @@ func main() {
 
 			var firstApproved time.Time
 
+			firstApprovedYear := ""
+
 			approvalWeek := ""
 
 			rejectionsPriorToFirstApproval := 0
 
 			subsequentApprovals := 0
+
+			reworked := false
+
+			reworkWeek := ""
+
+			reworkYear := ""
+
+			reworkSubsequentApprovals := 0
 
 			for _, comment := range comments.Comments {
 				for _, paragraph := range comment.CommentBody.Content {
@@ -176,8 +187,27 @@ func main() {
 								approved = true
 								firstApproved = createDate
 								approvalWeek = paragraph.Paragaph[1].Text[1:]
+								weekNum, _ := strconv.Atoi(approvalWeek)
+								if weekNum > 12 {
+									firstApprovedYear = fmt.Sprintf("%d", createDate.AddDate(0, -1, 0).Year()) // hack to deal with age case of week 52 specs being approved in January
+								} else {
+									firstApprovedYear = fmt.Sprintf("%d", createDate.Year())
+								}
 							} else {
 								subsequentApprovals += 1
+
+								threeMonthsAfterFirstApproval := firstApproved.AddDate(0, 3, 0)
+
+								if createDate.After(threeMonthsAfterFirstApproval) {
+									if !reworked {
+										reworked = true
+										//									firstApprovedInLastYear = createDate
+										reworkWeek = paragraph.Paragaph[1].Text[1:]
+										reworkYear = fmt.Sprintf("%d", createDate.Year())
+									} else {
+										reworkSubsequentApprovals += 1
+									}
+								}
 							}
 						}
 						if paragraph.Paragaph[0].Text == "Rejected in " {
@@ -198,8 +228,21 @@ func main() {
 				}
 				weekNum, _ := strconv.ParseFloat(approvalWeek, 64)
 				quarter := int(weekNum/13.04) + 1
-				fmt.Printf("%s,%s,\"%s\",%s,%s,%d,%s,%d,%d,%d,%s,%d\n", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, firstApproved.Year(), approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter)
 
+				reworkQuarter := ""
+
+				if reworked {
+					weekNum, _ = strconv.ParseFloat(reworkWeek, 64)
+					reworkQuarter = fmt.Sprintf("%d", int(weekNum/13.04)+1)
+				}
+				fmt.Printf("%s,%s,\"%s\",%s,%s,%s", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, firstApprovedYear)
+				fmt.Printf(",%s,%d,%d,%d,%s,%d,%s,%s,%s,%d", approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter, reworkWeek, reworkQuarter, reworkYear, reworkSubsequentApprovals)
+
+				if reworked {
+					fmt.Printf(",%s,%s,%s\n", reworkWeek, reworkQuarter, reworkYear)
+				} else {
+					fmt.Printf(",%s,%d,%s\n", approvalWeek, quarter, firstApprovedYear)
+				}
 			}
 		}
 

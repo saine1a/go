@@ -4,3 +4,8 @@
 /pkg
 /specs.csv
 old cenpro.csv
+all_spec.csv
+.gitignore
+all_specs copy.csv
+all_specs.csv
+snapshot.csv
