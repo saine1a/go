@@ -85,7 +85,7 @@ func queryIssues(startAt int) *IssuesResponse {
 	accessString = b64.StdEncoding.EncodeToString([]byte(accessString))
 
 	//	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) and updated>=startOfYear()")
-	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData) order by updated desc")
+	jql := url.QueryEscape("project=CENPRO and type=EPIC and labels not in (TestData, TT-for-FS, TT-for-PS) order by updated desc")
 
 	client := &http.Client{}
 	query := fmt.Sprintf("https://workstation-df.atlassian.net/rest/api/2/search?jql=%s&startAt=%d&maxResults=1000", jql, startAt)
