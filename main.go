@@ -1,3 +1,4 @@
+
 package main
 
 import (
@@ -34,6 +35,7 @@ type Field struct {
 	Company     ComplexField `json:"customfield_10412"`
 	SpecType    ComplexField `json:"customfield_11368"`
 	Created     string       `json:"created"`
+	BillToBU    ComplexField `json:"customfield_11508"`
 }
 
 type Issue struct {
@@ -146,7 +148,7 @@ func main() {
 
 	cursor := 0
 
-	fmt.Println("Type,Id,Summary,Company,Product,First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter,Rework Week,Rework Quarter,Rework Year,Adj Week,Adj Quarter,Adj Year")
+	fmt.Println("Type,Id,Summary,Company,Product,Bill To BU, First Approved (year),Week,Subsequent Approvals,Latency,Rejections (before first approval),Approved 1st time,Quarter,Rework Week,Rework Quarter,Rework Year,Adj Week,Adj Quarter,Adj Year")
 
 	for atEnd := false; !atEnd; {
 		response := queryIssues(cursor)
@@ -233,7 +235,7 @@ func main() {
 					weekNum, _ = strconv.ParseFloat(reworkWeek, 64)
 					reworkQuarter = fmt.Sprintf("%d", int(weekNum/13.04)+1)
 				}
-				fmt.Printf("%s,%s,\"%s\",%s,%s,%s", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, firstApprovedYear)
+				fmt.Printf("%s,%s,\"%s\",%s, %s,%s,%s", issue.Fields.SpecType.Value, issue.Key, issue.Fields.Summary, issue.Fields.Company.Value, issue.Fields.BU.Value, issue.Fields.BillToBU.Value, firstApprovedYear)
 				fmt.Printf(",%s,%d,%d,%d,%s,%d,%s,%s,%s", approvalWeek, subsequentApprovals, int64(latency.Hours()/24), rejectionsPriorToFirstApproval, approvedFirstTime, quarter, reworkWeek, reworkQuarter, reworkYear)
 
 				if reworked {
